@@ -6,12 +6,24 @@ use App\Filament\Resources\ProductResource\Pages;
 use App\Filament\Resources\ProductResource\RelationManagers;
 use App\Models\Product;
 use Filament\Forms;
+use Filament\Forms\Components\FileUpload;
+use Filament\Forms\Components\Group;
+use Filament\Forms\Components\Section;
+use Filament\Forms\Components\TextInput;
 use Filament\Forms\Form;
 use Filament\Resources\Resource;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\SoftDeletingScope;
+use Filament\Forms\Components\MarkdownEditor;
+use Filament\Forms\Components\Select;
+use Filament\Forms\Components\Toggle;
+use Filament\Forms\Set;
+use Filament\Tables\Filters\SelectFilter;
+use Illuminate\Support\Str;
+
+use function Laravel\Prompts\select;
 
 class ProductResource extends Resource
 {
@@ -23,54 +35,101 @@ class ProductResource extends Resource
     {
         return $form
             ->schema([
-                Forms\Components\TextInput::make('category_id')
-                    ->required()
-                    ->numeric(),
-                Forms\Components\TextInput::make('brand_id')
-                    ->required()
-                    ->numeric(),
-                Forms\Components\TextInput::make('name')
-                    ->required()
-                    ->maxLength(255),
-                Forms\Components\TextInput::make('slug')
-                    ->required()
-                    ->maxLength(255),
-                Forms\Components\FileUpload::make('image')
-                    ->image(),
-                Forms\Components\Textarea::make('description')
-                    ->columnSpanFull(),
-                Forms\Components\TextInput::make('price')
-                    ->required()
-                    ->numeric()
-                    ->prefix('$'),
-                Forms\Components\Toggle::make('is_active')
-                    ->required(),
-                Forms\Components\Toggle::make('is_featured')
-                    ->required(),
-                Forms\Components\Toggle::make('in_stock')
-                    ->required(),
-                Forms\Components\Toggle::make('on_sale')
-                    ->required(),
-            ]);
+                Group::make()->schema([
+                    Section::make('Product Information')->schema([
+                        TextInput::make('name')
+                        ->required()
+                        ->maxLength(255)
+                        ->live(onBlur: true)
+                        ->afterStateUpdated(function (string $operation, $state, Set $set) {
+                            if($operation !== 'create') {
+                                return;
+                            }
+
+                            $set('slug', Str::slug($state));
+                        }),
+                        
+                        TextInput::make('slug')
+                        ->required()
+                        ->maxLength(255)
+                        ->disabled()
+                        ->dehydrated()
+                        ->unique(Product::class, 'slug', ignoreRecord: true),
+
+                        MarkdownEditor::make('description')
+                        ->columnSpanFull()
+                        ->fileAttachmentsDirectory('products'),
+                    ])->columns(2),
+
+                    Section::make('Images')->schema([
+                        FileUpload::make('images')
+                        ->multiple()
+                        ->directory('products')
+                        ->maxFiles(5)
+                        ->reorderable(),
+                    ])
+                ])->columnSpan(2),
+                
+                Group::make()->schema([
+                    Section::make('price')->schema([
+                        TextInput::make('price')
+                        ->required()
+                        ->numeric()
+                        ->prefix('VND'),
+                    ]),
+
+                    Section::make('Associatitions')->schema([
+                        Select::make('category_id')
+                        ->required()
+                        ->searchable()
+                        ->preload()
+                        ->relationship('category', 'name'),
+
+                        Select::make('brand_id')
+                        ->required()
+                        ->searchable()
+                        ->preload()
+                        ->relationship('brand', 'name'),
+                    ]),
+
+                    Section::make('Status')->schema([
+                        Toggle::make('in_stock')
+                        ->required()
+                        ->default(true),
+
+                        Toggle::make('is_active')
+                        ->required()
+                        ->default(true),
+                        
+                        Toggle::make('is_featured')
+                        ->required(),
+
+                        Toggle::make('on_sale')
+                        ->required()
+                    ]),
+                    
+                ])->columnSpan(1)
+            ])->columns(3);
     }
 
     public static function table(Table $table): Table
     {
         return $table
             ->columns([
-                Tables\Columns\TextColumn::make('category_id')
-                    ->numeric()
-                    ->sortable(),
-                Tables\Columns\TextColumn::make('brand_id')
-                    ->numeric()
-                    ->sortable(),
+
                 Tables\Columns\TextColumn::make('name')
                     ->searchable(),
-                Tables\Columns\TextColumn::make('slug')
-                    ->searchable(),
-                Tables\Columns\TextColumn::make('price')
-                    ->money()
+                    
+                Tables\Columns\TextColumn::make('category.name')
                     ->sortable(),
+
+                Tables\Columns\TextColumn::make('brand.name')
+                    ->sortable(),
+
+                Tables\Columns\TextColumn::make('price')
+                    ->money('VND')
+                    ->sortable(),
+
                 Tables\Columns\IconColumn::make('is_active')
                     ->boolean(),
                 Tables\Columns\IconColumn::make('is_featured')
@@ -89,10 +148,18 @@ class ProductResource extends Resource
                     ->toggleable(isToggledHiddenByDefault: true),
             ])
             ->filters([
-                //
+                SelectFilter::make('category')
+                ->relationship('category', 'name'),
+
+                SelectFilter::make('brand')
+                ->relationship('brand', 'name'),
             ])
             ->actions([
-                Tables\Actions\EditAction::make(),
+                Tables\Actions\ActionGroup::make([
+                    Tables\Actions\ViewAction::make(),
+                    Tables\Actions\EditAction::make(),
+                    Tables\Actions\DeleteAction::make(),
+                ])
             ])
             ->bulkActions([
                 Tables\Actions\BulkActionGroup::make([
